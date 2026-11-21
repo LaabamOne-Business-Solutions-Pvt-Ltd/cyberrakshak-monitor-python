@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cyberrakshak-monitor"
+version = "1.0.0"
+description = "Cyber Rakshak error monitoring for Python: uncaught exceptions, thread crashes and ERROR log records, scrubbed of secrets, sent to your site's Errors page. One module, standard library only."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Laabam One Business Solutions (OPC) Private Limited" }]
+keywords = ["error monitoring", "error tracking", "crash reporting", "exceptions", "logging", "cyberrakshak"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Framework :: Django",
+    "Framework :: Flask",
+    "Topic :: Software Development :: Bug Tracking",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Logging",
+]
+dependencies = []
+
+[project.urls]
+Documentation = "https://app.cyberrakshak.ai/sdk/README.md"
+Source = "https://github.com/LaabamOne-Business-Solutions-Pvt-Ltd/cyberrakshak-monitor-python"
+Issues = "https://github.com/LaabamOne-Business-Solutions-Pvt-Ltd/cyberrakshak-monitor-python/issues"
+Changelog = "https://github.com/LaabamOne-Business-Solutions-Pvt-Ltd/cyberrakshak-monitor-python/blob/main/CHANGELOG.md"
+
+# One module, cyberrakshak_monitor.py, at the top of the wheel (src/ is only where it lives here).
+[tool.hatch.build.targets.wheel]
+only-include = ["src/cyberrakshak_monitor.py"]
+sources = ["src"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/cyberrakshak_monitor.py", "tests/", "README.md", "LICENSE", "CHANGELOG.md"]
