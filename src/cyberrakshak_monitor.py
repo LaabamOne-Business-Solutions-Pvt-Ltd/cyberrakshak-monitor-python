@@ -1,4 +1,4 @@
-"""Cyber Rakshak error monitoring for Python, version 1.0.0.
+"""Cyber Rakshak error monitoring for Python, version 1.1.0.
 
 Docs: https://app.cyberrakshak.ai/sdk/README.md
 Copyright Laabam One Business Solutions (OPC) Private Limited
@@ -61,7 +61,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["init", "close", "capture_exception", "capture_message", "flush", "scrub", "LoggingHandler"]
 
 SDK_NAME = "cyberrakshak-python"
@@ -108,6 +108,19 @@ def _luhn(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _iban_ok(text: str) -> bool:
+    """ISO 13616: the first four characters moved to the end, letters as 10..35, the whole number mod 97 is 1."""
+    s = text.replace(" ", "")
+    if len(s) < 15 or len(s) > 34:
+        return False
+    rest = 0
+    for ch in s[4:] + s[:4]:
+        c = ord(ch)
+        v = c - 55 if c >= 65 else c - 48
+        rest = (rest * 100 + v) % 97 if v > 9 else (rest * 10 + v) % 97
+    return rest == 1
+
+
 _HAS_STRONG = re.compile(r"[0-9A-Z._~+/=]")
 _SCRUB_RULES: List[Tuple["re.Pattern[str]", Callable[["re.Match[str]"], str]]] = [
     # A query string: ?name=... up to a space or quote. Where a request went is kept, never what it asked.
@@ -137,10 +150,27 @@ _SCRUB_RULES: List[Tuple["re.Pattern[str]", Callable[["re.Match[str]"], str]]] =
     ),
     # Email addresses.
     (re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), lambda m: "[email]"),
+    # IBANs: two capital letters, two digits, then 11 to 30 capitals or digits (or the same in groups of four, single
+    # spaces between), 15 to 34 in all, passing the ISO 13616 mod-97 check. Before cards: an IBAN holds a digit run.
+    (
+        re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}[0-9]{2}(?:[A-Z0-9]{11,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,4})?)(?![A-Za-z0-9])"),
+        lambda m: "[iban]" if _iban_ok(m.group(0)) else m.group(0),
+    ),
     # Card numbers: 13 to 19 digits (single spaces or dashes between) that pass the Luhn check.
     (
         re.compile(r"(?<![0-9])[0-9](?:[ -]?[0-9]){12,18}"),
         lambda m: "[card]" if _luhn(m.group(0).replace(" ", "").replace("-", "")) else m.group(0),
+    ),
+    # pin: 1234, "iban": "...", set-cookie: ..., x-tink-signature=...: these names only as whole words (not right after a
+    # letter or digit, the separator right after the name), so company:, spinning: and japan: stay; the value goes as in
+    # the password rule. After IBANs and cards, so a value with spaces in it has gone whole already. A value that is
+    # Bearer or Basic and a space was handled above.
+    (
+        re.compile(
+            r"""(?<![A-Za-z0-9])((?:authorization|cookie|signature|otp|pin|cvv|cvc|iban|bban|pan|account[_-]?(?:no|number|num)|sort[_-]?code|card[_-]?number|bank[_-]?auth[_-]?id)\\?["']?[ ]*[=:][ ]*\\?["']?)(?!(?:bearer|basic) )[^ \t\r\n&,;"'<>\\]+""",
+            re.I | re.A,
+        ),
+        lambda m: m.group(1) + "[removed]",
     ),
     # Long hex runs: session ids, hashes, keys.
     (re.compile(r"[0-9a-fA-F]{32,}"), lambda m: "[token]"),
@@ -154,15 +184,91 @@ _SCRUB_RULES: List[Tuple["re.Pattern[str]", Callable[["re.Match[str]"], str]]] =
 ]
 
 
+# A context entry's name that says its value is a secret: the words of the password rule anywhere in it, or one of the
+# whole-word names (at the end, not right after a letter or digit: user_pin, x-tink-signature, not spinning).
+_SECRET_NAME_RE = re.compile(r"password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|session[_-]?id", re.I | re.A)
+_WHOLE_NAME_RE = re.compile(
+    r"(?:^|[^A-Za-z0-9])(?:authorization|cookie|signature|otp|pin|cvv|cvc|iban|bban|pan|account[_-]?(?:no|number|num)|sort[_-]?code|card[_-]?number|bank[_-]?auth[_-]?id)$",
+    re.I | re.A,
+)
+_EXTRA_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+_MAX_EXTRA_NAMES = 50
+_MAX_EXTRA_PATTERNS = 20
+
+
 def scrub(text: Any) -> str:
-    """What a text looks like once scrubbed: what this library would send."""
+    """What a text looks like once scrubbed: what this library would send. The built-in rules always run, first; then
+    the names and patterns given to init() as scrub_names and scrub_patterns, which can only add to them."""
     try:
         out = text if isinstance(text, str) else ("" if text is None else str(text))
         for pattern, replace in _SCRUB_RULES:
             out = pattern.sub(replace, out)
+        state = _state
+        if state is not None and state.extra_names is not None:
+            out = state.extra_names.sub(lambda m: m.group(1) + "[removed]", out)
+        if state is not None and state.extra_patterns:
+            for extra in state.extra_patterns:
+                try:
+                    out = extra.sub("[removed]", out)
+                except Exception:
+                    pass  # A pattern of yours that fails is skipped; the built-in rules have run.
         return out
     except Exception:
         return ""
+
+
+def _secret_name(name: str) -> bool:
+    state = _state
+    return bool(
+        _SECRET_NAME_RE.search(name)
+        or _WHOLE_NAME_RE.search(name)
+        or (state is not None and state.extra_keys is not None and state.extra_keys.search(name))
+    )
+
+
+def _extra_names(names: Any, probe: "_State") -> List[str]:
+    """scrub_names: names of your own, as whole words, their values removed like the built-in ones; at most 50."""
+    kept: List[str] = []
+    if names is None:
+        return kept
+    if isinstance(names, (str, bytes)) or not hasattr(names, "__iter__"):
+        _debug(probe, "scrub_names left out: it must be a list of names")
+        return kept
+    for name in names:
+        if not isinstance(name, str) or not _EXTRA_NAME_RE.match(name):
+            _debug(probe, "scrub_names: a name was left out: only A-Z a-z 0-9 _ . - (1 to 40)")
+            continue
+        if len(kept) >= _MAX_EXTRA_NAMES:
+            _debug(probe, "scrub_names: only the first %d are used" % _MAX_EXTRA_NAMES)
+            break
+        if name.lower() not in kept:
+            kept.append(name.lower())
+    return kept
+
+
+def _extra_patterns(patterns: Any, probe: "_State") -> List["re.Pattern[str]"]:
+    """scrub_patterns: regular expressions of your own (compiled, or strings); what they match goes."""
+    kept: List["re.Pattern[str]"] = []
+    if patterns is None:
+        return kept
+    if isinstance(patterns, (str, bytes)) or not hasattr(patterns, "__iter__"):
+        _debug(probe, "scrub_patterns left out: it must be a list of patterns")
+        return kept
+    for pattern in patterns:
+        if len(kept) >= _MAX_EXTRA_PATTERNS:
+            _debug(probe, "scrub_patterns: only the first %d are used" % _MAX_EXTRA_PATTERNS)
+            break
+        try:
+            compiled = pattern if isinstance(pattern, re.Pattern) else re.compile(str(pattern))
+            if not isinstance(compiled.pattern, str):
+                raise TypeError("a pattern must be text, not bytes")
+            if compiled.search("") is not None:
+                _debug(probe, "scrub_patterns: a pattern that matches an empty text was left out")
+                continue
+            kept.append(compiled)
+        except Exception as e:
+            _debug(probe, "scrub_patterns: a pattern was left out: " + _describe(e))
+    return kept
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -226,7 +332,9 @@ def _clean_context(*sources: Any) -> Optional[Dict[str, Any]]:
         for name in list(source.keys()):
             key = _clip(name, _MAX_CONTEXT_KEY)
             value = source[name]
-            if value is None or isinstance(value, bool):
+            if _secret_name(str(name)):
+                kept = "[removed]"
+            elif value is None or isinstance(value, bool):
                 kept = value
             elif isinstance(value, int):
                 kept = value
@@ -321,6 +429,9 @@ class _State:
         self.before_send: Optional[Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = None
         self.debug = False
         self.context: Optional[Dict[str, Any]] = None
+        self.extra_names: Optional["re.Pattern[str]"] = None
+        self.extra_keys: Optional["re.Pattern[str]"] = None
+        self.extra_patterns: List["re.Pattern[str]"] = []
         self.platform = "server"
         self.runtime = "python"
         self.queue: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
@@ -706,9 +817,13 @@ def init(
     context: Optional[Dict[str, Any]] = None,
     platform: str = "server",
     capture_uncaught: bool = True,
+    scrub_names: Optional[List[str]] = None,
+    scrub_patterns: Optional[List[Any]] = None,
 ) -> None:
-    """Starts monitoring. key is the crk_ key from your site's Errors page; platform is 'server' unless you say
-    'script', 'desktop' or 'other'; before_send(problem) may change a problem or return None to drop it."""
+    """Starts monitoring. key is your site's crk_ app key (its Security scan tab, Apps, servers and scripts, Make an app
+    key); platform is 'server' unless you say 'script', 'desktop' or 'other'; before_send(problem) may change a problem
+    or return None to drop it. scrub_names (names of your own whose values are removed, like password=) and
+    scrub_patterns (regular expressions whose matches are removed) only add to the built-in rules, which always run."""
     global _state
     try:
         close()
@@ -717,7 +832,7 @@ def init(
         if not enabled:
             return
         if not isinstance(key, str) or not _KEY_RE.match(key.strip()):
-            _debug(probe, "not started: key must be the crk_ key from your site's Errors page")
+            _debug(probe, "not started: key must be your site's crk_ app key (its Security scan tab, Apps, servers and scripts)")
             return
         state = probe
         state.key = key.strip()
@@ -740,6 +855,15 @@ def init(
             state.sample_rate = 1.0
         state.before_send = before_send if callable(before_send) else None
         state.context = context if isinstance(context, dict) else None
+        names = _extra_names(scrub_names, state)
+        if names:
+            alternation = "|".join(re.escape(n) for n in names)
+            state.extra_names = re.compile(
+                r"""(?<![A-Za-z0-9])((?:""" + alternation + r""")\\?["']?[ ]*[=:][ ]*\\?["']?)[^ \t\r\n&,;"'<>\\]+""",
+                re.I | re.A,
+            )
+            state.extra_keys = re.compile(r"(?:^|[^A-Za-z0-9])(?:" + alternation + r")$", re.I | re.A)
+        state.extra_patterns = _extra_patterns(scrub_patterns, state)
         state.platform = platform if platform in _PLATFORMS else "server"
         state.runtime = "python %d.%d" % (sys.version_info[0], sys.version_info[1])
         _state = state

@@ -30,7 +30,7 @@ logging.getLogger().addHandler(monitor.LoggingHandler())     # every ERROR recor
 monitor.capture_exception(exc, route="nightly-import", context={"batch": 42})
 ```
 
-The key is your site's app key (`crk_…`), from the site's **Errors** page.
+The key is your site's app key (`crk_…`), made on the site's **Security scan** tab: under **Apps, servers and scripts**, press **Make an app key**.
 
 Django (settings.py, or an `AppConfig.ready()`):
 
@@ -61,6 +61,8 @@ got_request_exception.connect(lambda sender, exception, **kw: monitor.capture_ex
 | `before_send` | Gets each problem (a dict), already scrubbed; return it (changed if you like) or `None` to drop it. |
 | `debug` | Says on standard error what the library does and why something was not sent. The key is never printed. |
 | `context` | Values sent with every problem: at most 20, strings (300 characters), numbers, True/False. |
+| `scrub_names` | Names of your own whose values are removed, like `password=`: whole words, `A-Z a-z 0-9 _ . -`, at most 50. Only adds to the built-in rules. |
+| `scrub_patterns` | Regular expressions of your own (compiled, or strings): what they match becomes `[removed]`. At most 20; one that does not compile, or matches an empty text, is left out. Only adds to the built-in rules. |
 | `platform` | `server` (the default), `script`, `desktop`, `mobile` or `other`. |
 | `capture_uncaught` | Report exceptions that end the program or a thread (default `True`). |
 
@@ -81,8 +83,12 @@ variables.
 
 **Scrubbed before anything leaves**: query strings; `Bearer`/`Basic` values; the value after `password`, `secret`,
 `token`, `api_key` and the like; JSON Web Tokens; keys that say what they are (`crk_`, `sk_live_`, `ghp_`, `AKIA`…);
-email addresses; card numbers (Luhn-checked); long hex and random-looking runs. They become `[removed]`, `[token]`,
-`[email]` or `[card]`. The console scrubs everything again when it arrives.
+email addresses; IBANs (mod-97 checked); card numbers (Luhn-checked); the value after `pin`, `otp`, `cvv`, `iban`,
+`sort_code`, `card_number`, `account_number`, `cookie`, `signature`, `authorization` and the like, as whole words only
+(`company:` and `spinning:` stay); long hex and random-looking runs. They become `[removed]`, `[token]`, `[email]`,
+`[iban]` or `[card]`, and a context entry whose name is one of these names is sent as `[removed]`. `scrub_names` and
+`scrub_patterns` add names and patterns of your own; nothing switches the built-in rules off. The console scrubs
+everything again when it arrives.
 
 At most 10 problems go per request, each request under 64 KB; repeats of one problem are counted, not resent; a request
 takes at most 5 s; `429` and `5xx` answers are retried later (never before `Retry-After`). Nothing in the library

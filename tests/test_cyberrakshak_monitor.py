@@ -115,7 +115,7 @@ class Sending(Base):
         r = reqs[0]
         self.assertEqual(r["authorization"], "Bearer " + KEY)
         body = r["body"]
-        self.assertEqual(body["sdk"], {"name": "cyberrakshak-python", "version": "1.0.0"})
+        self.assertEqual(body["sdk"], {"name": "cyberrakshak-python", "version": "1.1.0"})
         self.assertEqual(body["platform"], "server")
         self.assertRegex(body["runtime"], r"^python \d+\.\d+$")
         self.assertEqual(body["release"], "2026.11.21+3")
@@ -352,6 +352,35 @@ class Processes(Base):
         reqs = requests_(1, 3000)
         self.assertEqual(reqs[0]["body"]["platform"], "script")
         self.assertEqual([p["message"] for p in problems(reqs)], ["import finished with 3 skipped rows"])
+
+    def test_scrub_names_and_patterns_add_to_the_built_in_rules(self):
+        import re as _re
+        m.init(key=KEY, endpoint=endpoint(), capture_uncaught=False,
+               scrub_names=["x-brand-key", "face.key", "bad name", 7],
+               scrub_patterns=[_re.compile(r"faces/[A-Za-z0-9/_.-]+"), "upload-[0-9]+", "(", "x*"],
+               context={"client_secret": "abc", "region": "dub1"})
+        try:
+            raise ValueError("x-brand-key=B1 for faces/2026/a.jpg (upload-77)")
+        except ValueError as e:
+            m.capture_exception(e, route="/files/face.key=K9",
+                                context={"user_pin": 1234, "iban": "IE29AIBK93115212345678", "x-tink-signature": True, "spinning": "yes", "japan": 3})
+        self.assertTrue(m.flush(3))
+        p = problems(requests_(1))[0]
+        self.assertEqual(p["message"], "ValueError: x-brand-key=[removed] for [removed] ([removed])")
+        self.assertNotIn("faces/2026", p.get("stack", ""))
+        self.assertEqual(p["route"], "/files/face.key=[removed]")
+        self.assertEqual(p["context"], {"client_secret": "[removed]", "region": "dub1", "user_pin": "[removed]", "iban": "[removed]",
+                                        "x-tink-signature": "[removed]", "spinning": "yes", "japan": 3})
+        self.assertEqual(m.scrub("pin=1 x-brand-key=2 password=3"), "pin=[removed] x-brand-key=[removed] password=[removed]")
+        m.close()
+        self.assertEqual(m.scrub("x-brand-key=2"), "x-brand-key=2")
+
+    def test_scrub_names_and_patterns_limits(self):
+        m.init(key=KEY, endpoint=endpoint(), capture_uncaught=False,
+               scrub_names=["ok_name"] + ["n%d" % i for i in range(60)],
+               scrub_patterns=["fine"] + ["p%dq" % i for i in range(25)])
+        self.assertEqual(m.scrub("ok_name=1 n48=2 n49=3 fine p18q p19q"), "ok_name=[removed] n48=[removed] n49=3 [removed] [removed] p19q")
+        self.assertEqual(m.scrub("password=1 card 4111 1111 1111 1111"), "password=[removed] card [card]")
 
     def test_the_key_is_never_printed(self):
         control("plan", {"responses": [{"status": 401}]})
