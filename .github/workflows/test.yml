@@ -18,8 +18,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
         include:
+          # The library supports 3.9, so it is tested there too: on Ubuntu 24.04, the newest runner image that
+          # actions/setup-python has a 3.9 build for (ubuntu-latest, 26.04, has none).
+          - { os: ubuntu-24.04, python: '3.9' }
           - { os: windows-latest, python: '3.12' }
           - { os: macos-latest, python: '3.12' }
     steps:
