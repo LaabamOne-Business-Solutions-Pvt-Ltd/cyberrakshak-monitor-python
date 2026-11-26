@@ -1,10 +1,10 @@
-"""Cyber Rakshak error monitoring for Python, version 1.1.0.
+"""Cyber Rakshak error monitoring for Python, version 1.1.1.
 
 Docs: https://app.cyberrakshak.ai/sdk/README.md
 Copyright Laabam One Business Solutions (OPC) Private Limited
 Released under the MIT licence: https://app.cyberrakshak.ai/sdk/LICENSE
 
-One file, standard library only, Python 3.9 or later. Sends what goes wrong in your program to your site's Errors
+One file, standard library only, Python 3.9 or later. Sends what goes wrong in your program to its own Errors
 page in the Cyber Rakshak console: the exception's text, its traceback, the route or command, when and how often.
 Secrets are scrubbed here before anything leaves (email addresses, tokens and keys, password=... values, query
 strings, card numbers); request bodies, headers, cookies, local variables and environment variables are never read.
@@ -61,7 +61,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __all__ = ["init", "close", "capture_exception", "capture_message", "flush", "scrub", "LoggingHandler"]
 
 SDK_NAME = "cyberrakshak-python"
@@ -820,8 +820,8 @@ def init(
     scrub_names: Optional[List[str]] = None,
     scrub_patterns: Optional[List[Any]] = None,
 ) -> None:
-    """Starts monitoring. key is your site's crk_ app key (its Security scan tab, Apps, servers and scripts, Make an app
-    key); platform is 'server' unless you say 'script', 'desktop' or 'other'; before_send(problem) may change a problem
+    """Starts monitoring. key is its crk_ app key (the console's Apps & websites: Add, then its Set up
+    page); platform is 'server' unless you say 'script', 'desktop' or 'other'; before_send(problem) may change a problem
     or return None to drop it. scrub_names (names of your own whose values are removed, like password=) and
     scrub_patterns (regular expressions whose matches are removed) only add to the built-in rules, which always run."""
     global _state
@@ -832,7 +832,7 @@ def init(
         if not enabled:
             return
         if not isinstance(key, str) or not _KEY_RE.match(key.strip()):
-            _debug(probe, "not started: key must be your site's crk_ app key (its Security scan tab, Apps, servers and scripts)")
+            _debug(probe, "not started: key must be its crk_ app key (the console's Apps & websites: Add, then its Set up page)")
             return
         state = probe
         state.key = key.strip()

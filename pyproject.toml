@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cyberrakshak-monitor"
-version = "1.1.0"
-description = "Cyber Rakshak error monitoring for Python: uncaught exceptions, thread crashes and ERROR log records, scrubbed of secrets, sent to your site's Errors page. One module, standard library only."
+version = "1.1.1"
+description = "Cyber Rakshak error monitoring for Python: uncaught exceptions, thread crashes and ERROR log records, scrubbed of secrets, sent to its own Errors page in Cyber Rakshak. One module, standard library only."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

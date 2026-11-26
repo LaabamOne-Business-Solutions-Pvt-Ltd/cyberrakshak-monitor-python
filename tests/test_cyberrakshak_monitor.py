@@ -115,7 +115,7 @@ class Sending(Base):
         r = reqs[0]
         self.assertEqual(r["authorization"], "Bearer " + KEY)
         body = r["body"]
-        self.assertEqual(body["sdk"], {"name": "cyberrakshak-python", "version": "1.1.0"})
+        self.assertEqual(body["sdk"], {"name": "cyberrakshak-python", "version": "1.1.1"})
         self.assertEqual(body["platform"], "server")
         self.assertRegex(body["runtime"], r"^python \d+\.\d+$")
         self.assertEqual(body["release"], "2026.11.21+3")
